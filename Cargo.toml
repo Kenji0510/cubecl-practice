@@ -1,0 +1,14 @@
+[package]
+name = "cubecl-practice"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["cuda"]
+cuda = ["cubecl/cuda"]
+wgpu = ["cubecl/wgpu"]
+
+[dependencies]
+bytemuck = "1.25.0"
+cubecl = { version = "0.9.0", default-features = false }
+cubecl-core = "0.9.0"
