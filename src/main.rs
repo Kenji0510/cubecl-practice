@@ -1,54 +1,155 @@
+use anyhow::{Context, Result};
 use cubecl::{Runtime, cube, prelude::*};
+use cubecl_practice::{
+    gpu_voxelization::{compact, init_table, insert_points},
+    pcd::{PointXYZ, load_pcd_xyz},
+};
 
-
-#[cube(launch_unchecked)]
-fn vadd<F: Float>(a: &Array<Line<F>>, b: &Array<Line<F>>, out: &mut Array<Line<F>>) {
-    if ABSOLUTE_POS < out.len() {
-        out[ABSOLUTE_POS] = a[ABSOLUTE_POS] + b[ABSOLUTE_POS];
-    }
+struct PushConsts {
+    num_points: i32,
+    table_size: i32,
+    voxel_size: f32,
+    _pad: i32,
 }
 
-pub fn launch_vadd<R: Runtime>(device: &R::Device, a: &[f32], b: &[f32]) -> Vec<f32> {
-    let vectorization = 4;
+fn launch_voxelization<R: Runtime>(
+    device: &R::Device,
+    pts: &[f32],
+    num_pts: usize,
+    voxel_size: f32,
+) -> Result<Vec<f32>> {
+    let table_size = (num_pts * 4) as u32;
+    let consts_data = PushConsts {
+        num_points: num_pts as i32,
+        table_size: table_size as i32,
+        voxel_size,
+        _pad: 0,
+    };
 
     let client = R::client(device);
 
-    let a_handle = client.create_from_slice(f32::as_bytes(a));
-    let b_handle = client.create_from_slice(f32::as_bytes(b));
+    let start = std::time::Instant::now();
 
-    let out_handle = client.empty(a.len() * core::mem::size_of::<f32>());
+    // Input points
+    let pts_h = client.create_from_slice(f32::as_bytes(pts));
+
+    // Create buffers
+    let keys_h = client.empty((table_size as usize) * std::mem::size_of::<u32>());
+    let cnt_h = client.empty((table_size as usize) * std::mem::size_of::<i32>());
+    let remap_h = client.empty((table_size as usize) * std::mem::size_of::<i32>());
+    let cent_h = client.empty((table_size as usize * 3) * std::mem::size_of::<f32>());
+
+    let out_h = client.empty((table_size as usize * 3) * std::mem::size_of::<f32>());
+    let outc_h = client.empty(1 * std::mem::size_of::<u32>());
+
+    let (cc_init, cd_init) = launch_cfg(table_size);
 
     unsafe {
-        vadd::launch_unchecked::<f32, R>(
-            &client, 
-            CubeCount::Static(1, 1, 1), 
-            CubeDim::new_1d((a.len() / vectorization) as u32), 
-            ArrayArg::from_raw_parts::<f32>(&a_handle, a.len(), vectorization as usize), 
-            ArrayArg::from_raw_parts::<f32>(&b_handle, b.len(), vectorization as usize), 
-            ArrayArg::from_raw_parts::<f32>(&out_handle, a.len(), vectorization as usize)
+        init_table::launch_unchecked::<R>(
+            &client,
+            cc_init.clone(),
+            cd_init.clone(),
+            ArrayArg::from_raw_parts::<u32>(&keys_h, table_size as usize, 1),
+            ArrayArg::from_raw_parts::<i32>(&cnt_h, table_size as usize, 1),
+            ArrayArg::from_raw_parts::<i32>(&remap_h, table_size as usize, 1),
+            ArrayArg::from_raw_parts::<f32>(&cent_h, table_size as usize * 3, 1),
+            ScalarArg::new(table_size),
         )
         .unwrap();
     }
 
-    let bytes = client.read_one(out_handle);
-    f32::from_bytes(&bytes).to_vec()
+    let outc_h = client.create_from_slice(u32::as_bytes(&[0u32]));
+
+    let shared_table_size: u32 = 1536;
+    let shared_probe: u32 = 32;
+    let global_probe: u32 = 1000;
+
+    let (cc_ins,  cd_ins)  = launch_cfg(num_pts as u32);
+
+    unsafe {
+        insert_points::launch_unchecked::<R>(
+            &client,
+            cc_ins.clone(),
+            cd_ins.clone(),
+            ArrayArg::from_raw_parts::<f32>(&pts_h, (num_pts * 3) as usize, 1),
+            ScalarArg::new(num_pts as u32),
+            ScalarArg::new(voxel_size),
+            ArrayArg::from_raw_parts::<u32>(&keys_h, table_size as usize, 1),
+            ArrayArg::from_raw_parts::<f32>(&cent_h, table_size as usize * 3, 1),
+            ArrayArg::from_raw_parts::<i32>(&cnt_h, table_size as usize, 1),
+            ScalarArg::new(table_size),
+            shared_table_size,
+            shared_probe,
+            global_probe,
+        )
+        .unwrap();
+    }
+
+    let (cc_cmp,  cd_cmp)  = launch_cfg(table_size);
+
+    unsafe {
+        compact::launch_unchecked::<R>(
+            &client,
+            cc_cmp.clone(),
+            cd_cmp.clone(),
+            ArrayArg::from_raw_parts::<u32>(&keys_h, table_size as usize, 1),
+            ArrayArg::from_raw_parts::<f32>(&cent_h, (table_size as usize) * 3, 1),
+            ArrayArg::from_raw_parts::<i32>(&cnt_h, table_size as usize, 1),
+            ScalarArg::new(table_size),
+            ArrayArg::from_raw_parts::<f32>(&out_h, (table_size as usize) * 3, 1),
+            ArrayArg::from_raw_parts::<u32>(&outc_h, 1, 1),
+        )
+        .unwrap();
+    }
+
+    let outc_bytes = client.read_one(outc_h);
+    let elapsed = start.elapsed();
+    println!("Voxelization completed in {:.2?}", elapsed);
+
+    let outc = u32::from_bytes(&outc_bytes)[0];
+    println!("Output count: {}", outc);
+
+    let out_bytes = client.read_one(out_h);
+    let out_floats = f32::from_bytes(&out_bytes);
+    Ok(out_floats[..(outc as usize * 3)].to_vec())
 }
 
-fn main() {
+fn launch_cfg(n: u32) -> (CubeCount, CubeDim) {
+    let block: u32 = 256;
+    let grid = (n + block - 1) / block;
+    (CubeCount::Static(grid, 1, 1), CubeDim::new_1d(block))
+}
+
+fn main() -> Result<()> {
     #[cfg(all(feature = "cuda", not(feature = "wgpu")))]
     type R = cubecl::cuda::CudaRuntime;
-    
+
     #[cfg(feature = "wgpu")]
     type R = cubecl::wgpu::WgpuRuntime;
 
     let device = <R as Runtime>::Device::default();
 
-    let a = vec![1.0_f32, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0];
-    let b = vec![0.5_f32, 1.5, 2.5, 3.5, -1.0, -2.0, -3.0, -4.0];
+    let pts_pcd = load_pcd_xyz("data/input/test/transformed-combined-frame-125.pcd")
+        .context("Failed to load the pcd")?;
 
-    let out = launch_vadd::<R>(&device, &a, &b);
+    let pts_vec = pcd_to_vec3f(&pts_pcd);
+    let pts_f32: Vec<f32> = pts_vec
+        .iter()
+        .flat_map(|(x, y, z)| vec![*x, *y, *z])
+        .collect();
 
-    println!("a:   {:?}", a);
-    println!("b:   {:?}", b);
-    println!("out: {:?}", out);
+    let voxel_size = 0.05;
+    
+    for i in   0..5 {
+        let out = launch_voxelization::<R>(&device, &pts_f32, pts_vec.len(), voxel_size)
+        .context("Failed to launch voxelization")?;
+    }
+
+    Ok(())
+}
+
+fn pcd_to_vec3f(pcd: &[PointXYZ]) -> Vec<(f32, f32, f32)> {
+    pcd.iter()
+        .map(|p| (p.x, p.y, p.z))
+        .collect()
 }

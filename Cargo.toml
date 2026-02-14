@@ -9,6 +9,8 @@ cuda = ["cubecl/cuda"]
 wgpu = ["cubecl/wgpu"]
 
 [dependencies]
+anyhow = "1.0.101"
 bytemuck = "1.25.0"
 cubecl = { version = "0.9.0", default-features = false }
 cubecl-core = "0.9.0"
+pcd-rs = { version = "0.11", features = ["derive"] }
