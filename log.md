@@ -101,3 +101,62 @@ Output count: 31434
 Voxelization completed in 822.96µs
 Output count: 31434
 ```
+
+# AGX Orin 64GB Ver
+## CUDA
+```bash
+=== Checking available backends ===
+Using backend: CUDA (NVIDIA)
+
+Voxelization completed in 438.94ms
+Output count: 31434
+Voxelization completed in 1.34ms
+Output count: 31434
+Voxelization completed in 1.04ms
+Output count: 31434
+Voxelization completed in 1.01ms
+Output count: 31434
+Voxelization completed in 1.01ms
+Output count: 31434
+Voxelization completed in 996.90µs
+Output count: 31434
+Voxelization completed in 1.00ms
+Output count: 31434
+Voxelization completed in 1.01ms
+Output count: 31434
+Voxelization completed in 1.00ms
+Output count: 31434
+Voxelization completed in 992.65µs
+Output count: 31434
+```
+
+## Wgpu(Vulkan)
+```bash
+=== Checking available backends ===
+Using backend: WGPU
+
+error: XDG_RUNTIME_DIR is invalid or not set in the environment.
+error: XDG_RUNTIME_DIR is invalid or not set in the environment.
+error: XDG_RUNTIME_DIR is invalid or not set in the environment.
+error: XDG_RUNTIME_DIR is invalid or not set in the environment.
+Voxelization completed in 33.92ms
+Output count: 31434
+Voxelization completed in 2.40ms
+Output count: 31434
+Voxelization completed in 2.11ms
+Output count: 31434
+Voxelization completed in 1.55ms
+Output count: 31434
+Voxelization completed in 1.53ms
+Output count: 31434
+Voxelization completed in 1.49ms
+Output count: 31434
+Voxelization completed in 1.50ms
+Output count: 31434
+Voxelization completed in 1.48ms
+Output count: 31434
+Voxelization completed in 1.45ms
+Output count: 31434
+Voxelization completed in 1.53ms
+Output count: 31434
+```

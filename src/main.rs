@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use cubecl::{Runtime, prelude::*};
 use cubecl_practice::{
     gpu_voxelization::{compact, init_table, insert_points},
-    pcd::{PointXYZ, load_pcd_xyz},
+    pcd::{PointXYZ, load_pcd_xyz, save_xyz_pcd},
 };
 
 struct PushConsts {
@@ -165,11 +165,30 @@ fn main() -> Result<()> {
         .context("Failed to launch voxelization")?;
     }
 
+    let out = launch_voxelization::<R>(&device, &pts_f32, pts_vec.len(), voxel_size)
+        .context("Failed to launch voxelization")?;
+
+    let downsampled_pcd = vec3f_to_pcd(&out);
+    println!("Downsampled point count: {}", downsampled_pcd.len());
+
+    save_xyz_pcd(&downsampled_pcd, "data/output/downsampled.pcd")
+        .context("Failed to save the downsampled PCD")?;
+
     Ok(())
 }
 
 fn pcd_to_vec3f(pcd: &[PointXYZ]) -> Vec<(f32, f32, f32)> {
     pcd.iter()
         .map(|p| (p.x, p.y, p.z))
+        .collect()
+}
+
+fn vec3f_to_pcd(pts_vec: &[f32]) -> Vec<PointXYZ> {
+    pts_vec.chunks(3)
+        .map(|chunk| PointXYZ {
+            x: chunk[0],
+            y: chunk[1],
+            z: chunk[2],
+        })
         .collect()
 }
