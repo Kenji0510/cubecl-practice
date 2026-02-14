@@ -251,6 +251,7 @@ checksum = "053856efd5436224775b9423d43d86f53d5b1d3af9a6b9983d9a313a0922638f"
 dependencies = [
  "cubecl-core",
  "cubecl-cuda",
+ "cubecl-hip",
  "cubecl-ir",
  "cubecl-runtime",
  "cubecl-wgpu",
@@ -352,6 +353,36 @@ dependencies = [
  "half",
  "log",
  "serde",
+]
+
+[[package]]
+name = "cubecl-hip"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbae9bc7ee6093d0d7a549c05873dff3478f9087b59eb09b223a97d642c849aa"
+dependencies = [
+ "bytemuck",
+ "cubecl-common",
+ "cubecl-core",
+ "cubecl-cpp",
+ "cubecl-hip-sys",
+ "cubecl-runtime",
+ "cubecl-zspace",
+ "derive-new",
+ "half",
+ "log",
+ "paste",
+ "serde",
+]
+
+[[package]]
+name = "cubecl-hip-sys"
+version = "7.0.5183101"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ef087b59445fda47d2177370886351eb923ad1a541086d4919268574cd9558"
+dependencies = [
+ "libc",
+ "regex",
 ]
 
 [[package]]

@@ -1,3 +1,5 @@
+use core::sync;
+
 use cubecl::prelude::*;
 
 pub const EMPTY_KEY: u32 = 0xFFFF_FFFF;
@@ -93,107 +95,54 @@ pub fn insert_points(
     table_counts: &mut Array<Atomic<i32>>,
     table_size: u32,
 
-    #[comptime] shared_table_size: u32, // 1536
-    #[comptime] shared_probe: u32,      // 32
+    // #[comptime] shared_table_size: u32, // 1536
+    // #[comptime] shared_probe: u32,      // 32
+    #[comptime] block_size: u32,      // 256
     #[comptime] global_probe: u32,      // 1000
 ) {
-    // --- shared memory ---
-    let s_keys = SharedMemory::<Atomic<u32>>::new(shared_table_size as usize);
-    let s_cent = SharedMemory::<Atomic<f32>>::new((shared_table_size as usize) * 3);
-    let s_cnt = SharedMemory::<Atomic<i32>>::new(shared_table_size as usize);
-
     let tid = UNIT_POS as u32;
     let ldim = CUBE_DIM as u32;
 
-    let mut i: u32 = tid;
-    while i < shared_table_size {
-        s_keys[i as usize].store(EMPTY_KEY);
-        s_cnt[i as usize].store(0);
+    // --- shared memory ---
+    let mut s_valid = SharedMemory::<u32>::new(block_size as usize);
+    let mut s_key = SharedMemory::<u32>::new(block_size as usize);
+    let mut s_xyz = SharedMemory::<f32>::new((block_size as usize) * 3);
 
-        let b = (i as usize) * 3;
-        s_cent[b + 0].store(0.0);
-        s_cent[b + 1].store(0.0);
-        s_cent[b + 2].store(0.0);
+    let gid = ABSOLUTE_POS as u32;
 
-        i += ldim;
-    }
+    s_valid[tid as usize] = 0;
     sync_cube();
 
-    let pid = ABSOLUTE_POS as u32;
-    if pid < num_points {
-        let base = (pid * 3) as usize;
+    if gid < num_points {
+        let base = (gid * 3) as usize;
         let px = points_xyz[base + 0];
         let py = points_xyz[base + 1];
         let pz = points_xyz[base + 2];
 
         let key = voxel_hash(px, py, pz, voxel);
-        let mut sidx = (key % shared_table_size) as u32;
 
-        let mut stored: bool = false;
-        let mut p: u32 = 0;
-        while p < shared_probe {
-            let prev = s_keys[sidx as usize].compare_exchange_weak(EMPTY_KEY, key);
-
-            if prev == EMPTY_KEY || prev == key {
-                let b = (sidx as usize) * 3;
-                s_cent[b + 0].fetch_add(px);
-                s_cent[b + 1].fetch_add(py);
-                s_cent[b + 2].fetch_add(pz);
-                s_cnt[sidx as usize].fetch_add(1);
-                stored = true;
-                break;
-            }
-
-            sidx += 1;
-            if sidx >= shared_table_size {
-                sidx = 0;
-            }
-            p += 1;
-        }
-
-        if !stored {
-            add_to_global(
-                key,
-                px,
-                py,
-                pz,
-                1,
-                table_keys,
-                table_centroids,
-                table_counts,
-                table_size,
-                global_probe,
-            );
-        }
+        s_key[tid as usize] = key;
+        let b = (tid as usize) * 3;
+        s_xyz[b + 0] = px;
+        s_xyz[b + 1] = py;
+        s_xyz[b + 2] = pz;
+        s_valid[tid as usize] = 1;
     }
 
     sync_cube();
 
-    // --- shared flush ---
-    let mut j: u32 = tid;
-    while j < shared_table_size {
-        let key = s_keys[j as usize].load();
-        if key != EMPTY_KEY {
-            let b = (j as usize) * 3;
-            let sx = s_cent[b + 0].load();
-            let sy = s_cent[b + 1].load();
-            let sz = s_cent[b + 2].load();
-            let sc = s_cnt[j as usize].load();
+    let mut i = tid;
+    while i < ldim {
+        if s_valid[i as usize] != 0 {
+            let key = s_key[i as usize];
+            let b = (i as usize) * 3;
+            let px = s_xyz[b + 0];
+            let py = s_xyz[b + 1];
+            let pz = s_xyz[b + 2];
 
-            add_to_global(
-                key,
-                sx,
-                sy,
-                sz,
-                sc,
-                table_keys,
-                table_centroids,
-                table_counts,
-                table_size,
-                global_probe,
-            );
+            add_to_global(key, px, py, pz, 1, table_keys, table_centroids, table_counts, table_size, global_probe);
         }
-        j += ldim;
+        i += ldim;
     }
 }
 

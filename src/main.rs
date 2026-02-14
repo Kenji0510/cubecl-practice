@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use cubecl::{Runtime, cube, prelude::*};
+use cubecl::{Runtime, prelude::*};
 use cubecl_practice::{
     gpu_voxelization::{compact, init_table, insert_points},
     pcd::{PointXYZ, load_pcd_xyz},
@@ -62,6 +62,7 @@ fn launch_voxelization<R: Runtime>(
 
     let shared_table_size: u32 = 1536;
     let shared_probe: u32 = 32;
+    let block_size: u32 = 256;
     let global_probe: u32 = 1000;
 
     let (cc_ins,  cd_ins)  = launch_cfg(num_pts as u32);
@@ -78,8 +79,9 @@ fn launch_voxelization<R: Runtime>(
             ArrayArg::from_raw_parts::<f32>(&cent_h, table_size as usize * 3, 1),
             ArrayArg::from_raw_parts::<i32>(&cnt_h, table_size as usize, 1),
             ScalarArg::new(table_size),
-            shared_table_size,
-            shared_probe,
+            // shared_table_size,
+            // shared_probe,
+            block_size,
             global_probe,
         )
         .unwrap();
@@ -120,12 +122,30 @@ fn launch_cfg(n: u32) -> (CubeCount, CubeDim) {
     (CubeCount::Static(grid, 1, 1), CubeDim::new_1d(block))
 }
 
-fn main() -> Result<()> {
-    #[cfg(all(feature = "cuda", not(feature = "wgpu")))]
-    type R = cubecl::cuda::CudaRuntime;
+
+#[cfg(all(feature = "cuda", not(feature = "wgpu"), not(feature = "hip")))]
+type R = cubecl::cuda::CudaRuntime;
+
+#[cfg(all(feature = "hip", not(feature = "wgpu")))]
+type R = cubecl::hip::HipRuntime;
+
+#[cfg(feature = "wgpu")]
+type R = cubecl::wgpu::WgpuRuntime;
+
+fn backend_name() -> &'static str {
+    #[cfg(all(feature = "cuda", not(feature = "wgpu"), not(feature = "hip")))]
+    { "CUDA (NVIDIA)" }
+
+    #[cfg(all(feature = "hip", not(feature = "wgpu")))]
+    { "HIP (AMD)" }
 
     #[cfg(feature = "wgpu")]
-    type R = cubecl::wgpu::WgpuRuntime;
+    { "WGPU" }
+}
+
+fn main() -> Result<()> {
+    println!("=== Checking available backends ===");
+    println!("Using backend: {}\n", backend_name());
 
     let device = <R as Runtime>::Device::default();
 
@@ -140,7 +160,7 @@ fn main() -> Result<()> {
 
     let voxel_size = 0.05;
     
-    for i in   0..5 {
+    for i in   0..10 {
         let out = launch_voxelization::<R>(&device, &pts_f32, pts_vec.len(), voxel_size)
         .context("Failed to launch voxelization")?;
     }
