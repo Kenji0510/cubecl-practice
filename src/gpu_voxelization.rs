@@ -95,23 +95,13 @@ pub fn insert_points(
     table_counts: &mut Array<Atomic<i32>>,
     table_size: u32,
 
-    // #[comptime] shared_table_size: u32, // 1536
-    // #[comptime] shared_probe: u32,      // 32
-    #[comptime] block_size: u32,      // 256
+    // 共有メモリを使わないため block_size は実は不要になりますが、
+    // インターフェース互換性のため残しています
+    #[comptime] block_size: u32,      
     #[comptime] global_probe: u32,      // 1000
 ) {
-    let tid = UNIT_POS as u32;
-    let ldim = CUBE_DIM as u32;
-
-    // --- shared memory ---
-    let mut s_valid = SharedMemory::<u32>::new(block_size as usize);
-    let mut s_key = SharedMemory::<u32>::new(block_size as usize);
-    let mut s_xyz = SharedMemory::<f32>::new((block_size as usize) * 3);
-
+    // グローバルのスレッドIDのみ取得
     let gid = ABSOLUTE_POS as u32;
-
-    s_valid[tid as usize] = 0;
-    sync_cube();
 
     if gid < num_points {
         let base = (gid * 3) as usize;
@@ -119,32 +109,87 @@ pub fn insert_points(
         let py = points_xyz[base + 1];
         let pz = points_xyz[base + 2];
 
+        // ハッシュキーの計算
         let key = voxel_hash(px, py, pz, voxel);
 
-        s_key[tid as usize] = key;
-        let b = (tid as usize) * 3;
-        s_xyz[b + 0] = px;
-        s_xyz[b + 1] = py;
-        s_xyz[b + 2] = pz;
-        s_valid[tid as usize] = 1;
-    }
-
-    sync_cube();
-
-    let mut i = tid;
-    while i < ldim {
-        if s_valid[i as usize] != 0 {
-            let key = s_key[i as usize];
-            let b = (i as usize) * 3;
-            let px = s_xyz[b + 0];
-            let py = s_xyz[b + 1];
-            let pz = s_xyz[b + 2];
-
-            add_to_global(key, px, py, pz, 1, table_keys, table_centroids, table_counts, table_size, global_probe);
-        }
-        i += ldim;
+        // --- 修正ポイント ---
+        // SharedMemoryを介さず、そのまま直接グローバルメモリのアトミック操作へ渡す
+        add_to_global(
+            key, 
+            px, 
+            py, 
+            pz, 
+            1, 
+            table_keys, 
+            table_centroids, 
+            table_counts, 
+            table_size, 
+            global_probe
+        );
     }
 }
+
+// #[cube(launch_unchecked)]
+// pub fn insert_points(
+//     points_xyz: &Array<f32>, // num_points*3
+//     num_points: u32,
+//     voxel: f32,
+
+//     table_keys: &mut Array<Atomic<u32>>,
+//     table_centroids: &mut Array<Atomic<f32>>, // table_size*3（sum）
+//     table_counts: &mut Array<Atomic<i32>>,
+//     table_size: u32,
+
+//     // #[comptime] shared_table_size: u32, // 1536
+//     // #[comptime] shared_probe: u32,      // 32
+//     #[comptime] block_size: u32,      // 256
+//     #[comptime] global_probe: u32,      // 1000
+// ) {
+//     let tid = UNIT_POS as u32;
+//     let ldim = CUBE_DIM as u32;
+
+//     // --- shared memory ---
+//     let mut s_valid = SharedMemory::<u32>::new(block_size as usize);
+//     let mut s_key = SharedMemory::<u32>::new(block_size as usize);
+//     let mut s_xyz = SharedMemory::<f32>::new((block_size as usize) * 3);
+
+//     let gid = ABSOLUTE_POS as u32;
+
+//     s_valid[tid as usize] = 0;
+//     sync_cube();
+
+//     if gid < num_points {
+//         let base = (gid * 3) as usize;
+//         let px = points_xyz[base + 0];
+//         let py = points_xyz[base + 1];
+//         let pz = points_xyz[base + 2];
+
+//         let key = voxel_hash(px, py, pz, voxel);
+
+//         s_key[tid as usize] = key;
+//         let b = (tid as usize) * 3;
+//         s_xyz[b + 0] = px;
+//         s_xyz[b + 1] = py;
+//         s_xyz[b + 2] = pz;
+//         s_valid[tid as usize] = 1;
+//     }
+
+//     sync_cube();
+
+//     let mut i = tid;
+//     while i < ldim {
+//         if s_valid[i as usize] != 0 {
+//             let key = s_key[i as usize];
+//             let b = (i as usize) * 3;
+//             let px = s_xyz[b + 0];
+//             let py = s_xyz[b + 1];
+//             let pz = s_xyz[b + 2];
+
+//             add_to_global(key, px, py, pz, 1, table_keys, table_centroids, table_counts, table_size, global_probe);
+//         }
+//         i += ldim;
+//     }
+// }
 
 /// GLSL compact.glsl 相当（平均化 + out_count atomicAdd）
 #[cube(launch_unchecked)]
